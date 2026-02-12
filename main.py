@@ -1,62 +1,109 @@
 import os
 import base64
 import io
-import json
 from flask import Flask, request, jsonify
 from pypdf import PdfReader, PdfWriter
+from pdf2image import convert_from_bytes
+import pytesseract
+from PIL import Image
 
 app = Flask(__name__)
 
+# -------------------------------
+# OCRで回転角度を検出
+# -------------------------------
+def detect_rotation(image: Image.Image) -> int:
+    try:
+        osd = pytesseract.image_to_osd(image)
+        for line in osd.split("\n"):
+            if "Rotate" in line:
+                return int(line.split(":")[1].strip())
+    except Exception:
+        pass
+    return 0
+
+
+# -------------------------------
+# PDF全ページを自動回転補正
+# -------------------------------
+def auto_rotate_pdf(pdf_bytes: bytes) -> bytes:
+    images = convert_from_bytes(pdf_bytes, dpi=200)
+
+    corrected_images = []
+
+    for img in images:
+        rotation = detect_rotation(img)
+        if rotation != 0:
+            img = img.rotate(-rotation, expand=True)
+        corrected_images.append(img)
+
+    output_buffer = io.BytesIO()
+    corrected_images[0].save(
+        output_buffer,
+        format="PDF",
+        save_all=True,
+        append_images=corrected_images[1:]
+    )
+
+    return output_buffer.getvalue()
+
+
+# -------------------------------
+# メインAPI
+# -------------------------------
 @app.route('/', methods=['POST'])
 def split_pdf():
     try:
         data = request.get_json()
         if not data:
             return jsonify({'error': 'No JSON payload provided'}), 400
-        
+
         pdf_base64 = data.get('pdf_base64')
         ranges = data.get('ranges')
 
         if not pdf_base64 or not ranges:
             return jsonify({'error': 'Missing pdf_base64 or ranges'}), 400
 
-        # Base64デコード
-        pdf_bytes = base64.b64decode(pdf_base64)
-        pdf_file = io.BytesIO(pdf_bytes)
-        reader = PdfReader(pdf_file)
+        # Base64 → bytes
+        original_pdf_bytes = base64.b64decode(pdf_base64)
+
+        # 🔥 ① 先に全ページ回転補正
+        rotated_pdf_bytes = auto_rotate_pdf(original_pdf_bytes)
+
+        # 🔥 ② 補正済PDFを読み込む
+        reader = PdfReader(io.BytesIO(rotated_pdf_bytes))
         total_pages = len(reader.pages)
 
         split_files = []
 
+        # 🔥 ③ 分割処理
         for r in ranges:
-            # Geminiは1始まりのページ番号を返すと想定
             start_page = r.get('start')
             end_page = r.get('end')
 
             if start_page is None or end_page is None:
                 continue
 
-            # 1-based index を 0-based index に変換
             start_idx = int(start_page) - 1
-            end_idx = int(end_page) # rangeの終了は排他なので、endそのままでOK (例: 1ページ目のみなら 0:1)
+            end_idx = int(end_page)
 
-            # 範囲チェック
-            if start_idx < 0: start_idx = 0
-            if end_idx > total_pages: end_idx = total_pages
-            if start_idx >= end_idx: continue
+            if start_idx < 0:
+                start_idx = 0
+            if end_idx > total_pages:
+                end_idx = total_pages
+            if start_idx >= end_idx:
+                continue
 
             writer = PdfWriter()
-            # 指定範囲のページを追加
+
             for i in range(start_idx, end_idx):
                 writer.add_page(reader.pages[i])
 
             output_buffer = io.BytesIO()
             writer.write(output_buffer)
-            split_pdf_bytes = output_buffer.getvalue()
 
-            # Base64エンコードしてリストに追加
             split_files.append({
-                'base64': base64.b64encode(split_pdf_bytes).decode('utf-8')
+                'base64': base64.b64encode(output_buffer.getvalue()).decode('utf-8')
             })
 
         return jsonify(split_files)
@@ -65,7 +112,7 @@ def split_pdf():
         print(f"Error: {e}")
         return jsonify({'error': str(e)}), 500
 
+
 if __name__ == "__main__":
-    # Cloud Runは環境変数PORTで指定されたポートでリッスンする必要がある
     port = int(os.environ.get("PORT", 8080))
-    app.run(debug=True, host="0.0.0.0", port=port)
+    app.run(debug=False, host="0.0.0.0", port=port)
