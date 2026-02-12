@@ -31,19 +31,40 @@ def detect_rotation(image):
 
 
 # -------------------------------
-# PDF全ページを自動回転補正
+# PDFを1ページずつ回転補正
 # -------------------------------
 def auto_rotate_pdf(pdf_bytes: bytes) -> bytes:
-    images = convert_from_bytes(pdf_bytes, dpi=200)
+    print("AUTO ROTATE STARTED")
+
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    total_pages = len(reader.pages)
 
     corrected_images = []
 
-    for img in images:
+    for page_number in range(total_pages):
+        print(f"Processing page {page_number+1}/{total_pages}")
+
+        # 1ページのみ画像化（省メモリ）
+        images = convert_from_bytes(
+            pdf_bytes,
+            dpi=100,
+            first_page=page_number + 1,
+            last_page=page_number + 1
+        )
+
+        if not images:
+            continue
+
+        img = images[0]
+
         rotation = detect_rotation(img)
+
         if rotation != 0:
             img = img.rotate(-rotation, expand=True)
+
         corrected_images.append(img)
 
+    # 再PDF化
     output_buffer = io.BytesIO()
     corrected_images[0].save(
         output_buffer,
@@ -52,9 +73,11 @@ def auto_rotate_pdf(pdf_bytes: bytes) -> bytes:
         append_images=corrected_images[1:]
     )
 
+    print("AUTO ROTATE FINISHED")
+
     return output_buffer.getvalue()
 
-
+    
 # -------------------------------
 # メインAPI
 # -------------------------------
