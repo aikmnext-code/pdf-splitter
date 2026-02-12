@@ -12,14 +12,21 @@ app = Flask(__name__)
 # -------------------------------
 # OCRで回転角度を検出
 # -------------------------------
-def detect_rotation(image: Image.Image) -> int:
+def detect_rotation(image):
     try:
-        osd = pytesseract.image_to_osd(image)
+        osd = pytesseract.image_to_osd(
+            image,
+            config="--psm 0"
+        )
+        print("OSD RESULT:", osd)
+
         for line in osd.split("\n"):
             if "Rotate" in line:
                 return int(line.split(":")[1].strip())
-    except Exception:
-        pass
+
+    except Exception as e:
+        print("OCR ERROR:", e)
+
     return 0
 
 

@@ -18,4 +18,4 @@ CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 main:app
 # PDFページを画像変換するための poppler（pdf2image が内部で使用）
 # OCRによる自動回転判定のための Tesseract
 RUN apt-get update && \
-    apt-get install -y tesseract-ocr poppler-utils
+    apt-get install -y tesseract-ocr tesseract-ocr-jpn poppler-utils
